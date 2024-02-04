@@ -21,3 +21,8 @@ protogen:
 .PHONY: pack
 pack: build
 	substreams pack substreams.yaml
+
+.PHONY: test
+test: build
+	substreams run -e eth.substreams.pinax.network:443 substreams.yaml map_transfers -s 19152759 -t 19152762 
+	
