@@ -8,7 +8,7 @@ build:
 
 .PHONY: run
 run: build
-	substreams run -e $(ENDPOINT) substreams.yaml db_out -s $(START_BLOCK) -t $(STOP_BLOCK)
+	substreams run -e eth.substreams.pinax.network:443 substreams.yaml map_transfers -s -10
 
 .PHONY: gui
 gui: build
@@ -16,7 +16,7 @@ gui: build
 
 .PHONY: protogen
 protogen:
-	substreams protogen ./substreams.yaml --exclude-paths="google,sf/substreams/sink/database,sf/substreams/rpc,sf/substreams/v1"
+	substreams protogen ./substreams.yaml --exclude-paths="sf/substreams,google"
 
 .PHONY: pack
 pack: build
