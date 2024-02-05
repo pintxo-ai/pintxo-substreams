@@ -802,6 +802,7 @@ dependencies = [
  "anyhow",
  "ethabi",
  "getrandom",
+ "hex",
  "hex-literal",
  "num-bigint",
  "prost",

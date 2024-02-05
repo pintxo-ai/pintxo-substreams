@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package eth.seaport.v1;
+
+message SeaportPurchases {
+    repeated Purchase purchases = 1;
+}
+
+message Purchase {
+    uint64 order_type = 1;
+    string from = 2;
+    string to = 3;
+    string token_in = 4;
+    uint64 token_in_amount = 5;
+    string token_out = 6;
+    uint64 token_out_amount = 7;
+}
