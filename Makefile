@@ -8,7 +8,7 @@ build:
 
 .PHONY: run
 run: build
-	substreams run -e eth.substreams.pinax.network:443 substreams.yaml map_transfers -s -10
+	substreams run -e eth.substreams.pinax.network:443 substreams.yaml map_seaport_purchases -s -10
 
 .PHONY: gui
 gui: build
@@ -24,8 +24,12 @@ pack: build
 
 .PHONY: test
 test: build
-	substreams run -e eth.substreams.pinax.network:443 substreams.yaml map_transfers -s 19152759 -t 19152762 
+	substreams run -e eth.substreams.pinax.network:443 substreams.yaml map_seaport_purchases -s 19152759 -t 19152762 
 
 .PHONY: uniswap
 uniswap: build
 	substreams run -e eth.substreams.pinax.network:443 substreams.yaml map_pools_created -s -10 
+
+.PHONY: metrics
+metrics: build
+	substreams run -e eth.substreams.pinax.network:443 substreams.yaml metrics_out -s -10

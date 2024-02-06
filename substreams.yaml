@@ -10,6 +10,7 @@ protobuf:
   files:
     - erc721.proto
     - seaport.proto
+    - seaport_metrics.proto
   importPaths:
     - ./proto
 
@@ -19,31 +20,31 @@ binaries:
     file: ./target/wasm32-unknown-unknown/release/substreams.wasm
 
 modules:
-  - name: map_transfers
+  - name: map_seaport_purchases
     kind: map
     initialBlock: 19140000
     inputs:
       - source: sf.ethereum.type.v2.Block
     output:
       type: proto:eth.seaport.v1.SeaportPurchases
-
-  - name: store_transfers
+  
+  - name: store_seaport_activity
     kind: store
     initialBlock: 19140000
     updatePolicy: add
-    valueType: int64
-    inputs:
-      - map: map_transfers
-
-  - name: db_out
-    kind: map
-    initialBlock: 19140000
+    valueType: bigint 
     inputs:
       - source: sf.substreams.v1.Clock
-      - map: map_transfers
-      - store: store_transfers
-        mode: deltas
+      - map: map_seaport_purchases  
+  
+  - name: metrics_out
+    kind: map
+    initialBlock: 19140000
+    inputs: 
+     - map: map_seaport_purchases
+     - store: store_seaport_activity
     output:
-      type: proto:sf.substreams.sink.database.v1.DatabaseChanges
+      type: proto:eth.seaport_metrics.v1.Metrics
+ 
 
 network: mainnet

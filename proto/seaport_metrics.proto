@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package eth.seaport_metrics.v1;
+
+message Metrics {
+    repeated Metric metrics = 1;
+}
+
+message Metric {
+    string key = 1;
+    uint64 value = 2;
+}
