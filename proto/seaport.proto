@@ -11,7 +11,7 @@ message Purchase {
     string from = 2;
     string to = 3;
     string token_in = 4;
-    uint64 token_in_amount = 5;
+    double token_in_amount = 5;
     string token_out = 6;
-    uint64 token_out_amount = 7;
+    double token_out_amount = 7;
 }

@@ -1,6 +1,8 @@
 mod abi;
 mod pb;
 
+use std::str::FromStr;
+
 // use hex_literal::hex;
 // use pb::eth::erc721::v1 as erc721;
 use pb::eth::seaport::v1 as seaport;
@@ -16,10 +18,65 @@ use substreams::{log}; // Hex
 // use substreams_database_change::tables::Tables;
 use substreams_ethereum::{pb::sf::ethereum::r#type::v2 as eth, Event};
 use substreams::pb::substreams::Clock;
-use substreams::store::{StoreAdd, StoreAddBigInt, StoreGetBigInt, StoreNew};
-use substreams::scalar::{BigDecimal, BigInt};
+use substreams::store::{StoreAdd, StoreAddBigInt, StoreDelete, StoreGetBigDecimal, StoreGetBigInt, StoreNew};
+use substreams::scalar::{BigInt, BigDecimal};
+use substreams::prelude::StoreAddBigDecimal;
 use substreams::store::StoreGet;
+use num_traits::cast::ToPrimitive;
 
+
+pub struct ERC20 {
+    name: &'static str,
+    symbol: &'static str,
+    decimals: u64,
+    contract: &'static str
+}
+
+// start with the basics.
+static WHITELIST: [ERC20; 7] = [
+    ERC20 {
+        name: "Wrapped Ethereum",
+        symbol: "WETH",
+        decimals: 18,
+        contract: "c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+    },
+    ERC20 {
+        name: "Circle USD",
+        symbol: "USDC",
+        decimals: 6,
+        contract: "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    },
+    ERC20 {
+        name: "Dai Stablecoin",
+        symbol: "DAI",
+        decimals: 18,
+        contract: "6b175474e89094c44da98b954eedeac495271d0f"
+    },
+    ERC20 {
+        name: "Tether USD",
+        symbol: "USDT",
+        decimals: 6,
+        contract: "dac17f958d2ee523a2206206994597c13d831ec7"
+    },
+    ERC20 {
+        name: "TrueUSD",
+        symbol: "TUSD",
+        decimals: 18,
+        contract: "0000000000085d4780b73119b644ae5ecd22b376"
+    },
+    ERC20 {
+        name: "4dd28568d05f09b02220b09c2cb307bfd837cb95",
+        symbol: "PRINTS",
+        decimals: 18,
+        contract: "0000000000085d4780b73119b644ae5ecd22b376"
+    },
+    ERC20 {
+        name: "Fei USD",
+        symbol: "FEI",
+        decimals: 18,
+        contract: "956f47f50a910163d8bf957cf5846d573e7f87ca"
+    },
+];
 
 substreams_ethereum::init!();
 
@@ -30,44 +87,77 @@ fn map_seaport_purchases(blk: eth::Block) -> Result<Option<seaport::SeaportPurch
     for log in blk.logs() {
         if let Some(event) = abi::seaport::events::OrderFulfilled::match_and_decode(log.log) {
             // https://docs.opensea.io/reference/seaport-structs#spentitem
-            let item_type = event.offer[0].0.to_u64();
-            
-            if item_type == 0 {
-                // log::info!("NATIVE ASSET (ETH) PURCHASE!");
-                // log::info!("Amount: {:?}", substreams::scalar::BigDecimal::from(event.offer[0].3.clone()) /  substreams::scalar::BigDecimal::new(substreams::scalar::BigInt::from(1), 18));
-            }
-            // erc20 purchase event
-            else if item_type == 1 {
-                // log::info!("ERC20 PURCHASE!");
-                let amount = substreams::scalar::BigDecimal::from(event.offer[0].3.clone());
-                // 18 decimals is the standard for erc20 but not necessary. this needs to be adjusted for each ERC20.
-                // log::info!("erc20 quantity: {:?}", amount);
-                // log::info!("total USD: {:?}", price.unwrap() * amount);
-                purchases.push(seaport::Purchase {
-                    order_type: item_type,
-                    from: hex::encode(event.offerer),
-                    to: hex::encode(event.recipient),
-                    token_in: hex::encode(event.offer[0].1.clone()),
-                    token_in_amount: event.offer[0].3.to_u64(),
-                    token_out: hex::encode(event.consideration[0].1.clone()),
-                    token_out_amount: event.consideration[0].3.to_u64(),
-                })
-            }
-            else if item_type == 2 {
-                // log::info!("order purchased with ERC721!");
+            if !event.offer.is_empty() {
+                let item_type = event.offer[0].0.to_u64();
+                if item_type == 0 {
+                    // log::info!("NATIVE ASSET (ETH) PURCHASE!");
+                    // log::info!("Amount: {:?}", substreams::scalar::BigDecimal::from(event.offer[0].3.clone()) /  substreams::scalar::BigDecimal::new(substreams::scalar::BigInt::from(1), 18));
+                }
+                // erc20 purchase event
+                else if item_type == 1 {
+                    if !event.offer.is_empty() && !event.consideration.is_empty() {
 
-            }
-            else if item_type == 3 {
-                // log::info!("order purchased with ERC1155!");
+                    // log::info!("ERC20 PURCHASE!");
+                    let (amount_in, token_in): (f64, String) = match find_token_by_contract(&hex::encode(event.offer[0].1.clone())){
+                        Some(token) => {
+                            (event.offer[0].3.to_decimal(token.decimals).to_f64().unwrap(), token.symbol.to_owned())
+                        }
+                        None => {
+                            // if the amount was one, it was 99.99% likely to be an nft. dont scale by decimals.
+                            if event.offer[0].3 == BigInt::one() {
+                                (event.offer[0].3.to_decimal(1).to_f64().unwrap(), hex::encode(event.offer[0].1.to_owned()))
+                            }
+                            else {
+                                (event.offer[0].3.to_decimal(18).to_f64().unwrap(), hex::encode(event.offer[0].1.to_owned()))
+                            }
+                        }
+                    };
+                    let (amount_out, token_out): (f64, String)  = match find_token_by_contract(&hex::encode(event.consideration[0].1.clone())){
+                        Some(token) => {
+                            (event.consideration[0].3.to_decimal(token.decimals).to_f64().unwrap(), token.symbol.to_owned()) 
+                        }
+                        None => {
+                            // if the amount was one, it was 99.99% likely to be an nft. dont scale by decimals.
+                            if event.consideration[0].3 == BigInt::one() {
+                                (event.consideration[0].3.to_decimal(1).to_f64().unwrap(), hex::encode(event.consideration[0].1.to_owned()))
+                            }
+                            else {
+                                (event.consideration[0].3.to_decimal(18).to_f64().unwrap(), hex::encode(event.consideration[0].1.to_owned()))
+                            }
+                        }
+                    };
 
-            }
-            else if item_type == 4 {
-                // log::info!("order purchased with ERC721_WITH_CRITERIA!");
+                    log::info!("the amount of eth in: {}", amount_in);
+                    log::info!("the amount of eth out: {}", amount_out);
 
-            }
-            else if item_type == 5 {
-                // log::info!("order purchased with ERC1155_WITH_CRITERIA!");
-
+                    
+                        purchases.push(seaport::Purchase {
+                            order_type: item_type,
+                            from: hex::encode(event.offerer),
+                            to: hex::encode(event.recipient),
+                            token_in: token_in,
+                            token_in_amount: amount_in,
+                            token_out: token_out,
+                            token_out_amount: amount_out,
+                        })
+                    }
+                }
+                else if item_type == 2 {
+                    // log::info!("order purchased with ERC721!");
+    
+                }
+                else if item_type == 3 {
+                    // log::info!("order purchased with ERC1155!");
+    
+                }
+                else if item_type == 4 {
+                    // log::info!("order purchased with ERC721_WITH_CRITERIA!");
+    
+                }
+                else if item_type == 5 {
+                    // log::info!("order purchased with ERC1155_WITH_CRITERIA!");
+    
+                }
             }
         }
     }
@@ -75,29 +165,49 @@ fn map_seaport_purchases(blk: eth::Block) -> Result<Option<seaport::SeaportPurch
 }
 
 #[substreams::handlers::store]
-pub fn store_seaport_activity(clock: Clock, purchases: seaport::SeaportPurchases, output: StoreAddBigInt) {
+pub fn store_seaport_activity(clock: Clock, purchases: seaport::SeaportPurchases, output: StoreAddBigDecimal) {
     // unimplemented!("filter and store purchases. this is where I could blacklist bad actors.");
     let timestamp_seconds = clock.timestamp.unwrap().seconds;
     let hour_id = timestamp_seconds / 3600;
     let prev_hour_id = hour_id - 1;
 
     for purchase in purchases.purchases {
-        // ordinal (what is this?) , key, value to add to store.
-        output.add(1, format!("seaport_volume:{}", purchase.token_in), &BigInt::from(purchase.token_in_amount));
-        output.add(1, format!("seaport_volume:{}", purchase.token_out), &BigInt::from(purchase.token_out_amount));
-        output.add(2, format!("seaport_activity"), &BigInt::one());
+        // delete prior metrics from KV store.
+        output.delete_prefix(0, &format!("seaport_volume:{prev_hour_id}:{}", purchase.token_in));
+        output.delete_prefix(0, &format!("seaport_volume:{prev_hour_id}:{}", purchase.token_out));
+        output.delete_prefix(0, &format!("seaport_activity:{prev_hour_id}"));
+
+        let in_amount = BigDecimal::from_str(&purchase.token_in_amount.to_string()).unwrap();
+        log::info!("the amount of eth out: {}", in_amount);
+        let out_amount = BigDecimal::from_str(&purchase.token_out_amount.to_string()).unwrap();
+        log::info!("the amount of eth out: {}", out_amount);
+        // ordinal, key, value to add to store.
+        // btw - right now I convert a f64 to a str to a BigDecimal - that can't be the most efficient.
+        output.add(0, format!("seaport_volume:{hour_id}:{}", purchase.token_in), in_amount);
+        output.add(0, format!("seaport_volume:{hour_id}:{}", purchase.token_out), out_amount);
+        output.add(0, format!("seaport_activity:{}", hour_id), &BigDecimal::one());
     }
 }
 
 #[substreams::handlers::map]
 pub fn metrics_out(
+    clock: Clock,
     purchases: seaport::SeaportPurchases,
-    store: StoreGetBigInt,
+    store: StoreGetBigDecimal,
 ) -> Result<Option<seaport_metrics::Metrics>, substreams::errors::Error> {
     let mut metrics = Vec::new();
+    let timestamp_seconds = clock.timestamp.unwrap().seconds;
+    let hour_id = timestamp_seconds / 3600;
+
     for purchase in purchases.purchases {
-        metrics.push(seaport_metrics::Metric {key: format!("seaport_volume:{}", purchase.token_in), value: store.get_at(1, format!("seaport_volume:{}", purchase.token_in)).unwrap().to_u64()});
+        let val = store.get_at(1, format!("seaport_volume:{hour_id}:{}", purchase.token_in)).unwrap().to_f64().unwrap(); 
+        log::info!("value retrieved: {}", val);
+        metrics.push(seaport_metrics::Metric {key: format!("seaport_volume:hour:{hour_id}:{}", purchase.token_in), value: val});
     }
 
     Ok(Some(seaport_metrics::Metrics { metrics }))
+}
+
+fn find_token_by_contract(contract_address: &str) -> Option<&'static ERC20> {
+    WHITELIST.iter().find(|&token| token.contract == contract_address)
 }

@@ -8,5 +8,5 @@ message Metrics {
 
 message Metric {
     string key = 1;
-    uint64 value = 2;
+    double value = 2;
 }

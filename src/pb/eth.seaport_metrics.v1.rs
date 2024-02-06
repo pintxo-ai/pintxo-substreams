@@ -10,7 +10,7 @@ pub struct Metrics {
 pub struct Metric {
     #[prost(string, tag="1")]
     pub key: ::prost::alloc::string::String,
-    #[prost(uint64, tag="2")]
-    pub value: u64,
+    #[prost(double, tag="2")]
+    pub value: f64,
 }
 // @@protoc_insertion_point(module)

@@ -16,11 +16,11 @@ pub struct Purchase {
     pub to: ::prost::alloc::string::String,
     #[prost(string, tag="4")]
     pub token_in: ::prost::alloc::string::String,
-    #[prost(uint64, tag="5")]
-    pub token_in_amount: u64,
+    #[prost(double, tag="5")]
+    pub token_in_amount: f64,
     #[prost(string, tag="6")]
     pub token_out: ::prost::alloc::string::String,
-    #[prost(uint64, tag="7")]
-    pub token_out_amount: u64,
+    #[prost(double, tag="7")]
+    pub token_out_amount: f64,
 }
 // @@protoc_insertion_point(module)
