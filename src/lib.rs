@@ -86,7 +86,7 @@ fn map_seaport_purchases(blk: eth::Block) -> Result<Option<seaport::SeaportPurch
     let mut purchases: Vec<seaport::Purchase> = Vec::new();
     for log in blk.logs() {
         if let Some(event) = abi::seaport::events::OrderFulfilled::match_and_decode(log.log) {
-
+            
             // https://docs.opensea.io/reference/seaport-structs#spentitem
             if !event.offer.is_empty() {
                 let item_type = event.offer[0].0.to_u64();
@@ -96,7 +96,7 @@ fn map_seaport_purchases(blk: eth::Block) -> Result<Option<seaport::SeaportPurch
                 // or purchase with erc20
                 // the last two I am unclear about. "with criteria"
                 if item_type == 0 {
-                    // unimplemented!("native eth");
+                    
                 }
                 else if item_type == 1 { // erc20 purchase event
                     if !event.offer.is_empty() && !event.consideration.is_empty() {
@@ -220,9 +220,13 @@ pub fn metrics_out(
 
     for purchase in purchases.purchases {
         // again, should be a match statement, not .unwrap()
-        let val = store.get_at(1, format!("seaport_volume:{hour_id}:{}", purchase.token_in)).unwrap(); 
-        log::info!("value retrieved: {}", val);
-        metrics.push(seaport_metrics::Metric {key: format!("seaport_volume:hour:{hour_id}:{}", purchase.token_in), value: val.to_string()});
+        let value_in = store.get_at(1, format!("seaport_volume:{hour_id}:{}", purchase.token_in)).unwrap(); 
+        let value_out = store.get_at(1, format!("seaport_volume:{hour_id}:{}", purchase.token_out)).unwrap(); 
+        let activity = store.get_at(1, format!("seaport_volume:{hour_id}:{}", purchase.token_out)).unwrap();
+
+        metrics.push(seaport_metrics::Metric {key: format!("seaport_volume:hour:{hour_id}:{}", purchase.token_in), value: value_in.to_string()});
+        metrics.push(seaport_metrics::Metric {key: format!("seaport_volume:hour:{hour_id}:{}", purchase.token_out), value: value_out.to_string()});
+        metrics.push(seaport_metrics::Metric {key: format!("seaport_activity:{}", hour_id), value: activity.to_string()});
     }
 
     Ok(Some(seaport_metrics::Metrics { metrics }))

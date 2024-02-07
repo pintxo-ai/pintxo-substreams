@@ -24,7 +24,7 @@ pack: build
 
 .PHONY: test
 test: build
-	substreams run -e eth.substreams.pinax.network:443 substreams.yaml map_seaport_purchases -s 19152759 -t 19152762 
+	substreams run -e eth.substreams.pinax.network:443 substreams.yaml map_seaport_purchases -s 19178136 -t 19178140 
 
 .PHONY: uniswap
 uniswap: build
