@@ -86,59 +86,75 @@ fn map_seaport_purchases(blk: eth::Block) -> Result<Option<seaport::SeaportPurch
     let mut purchases: Vec<seaport::Purchase> = Vec::new();
     for log in blk.logs() {
         if let Some(event) = abi::seaport::events::OrderFulfilled::match_and_decode(log.log) {
+
             // https://docs.opensea.io/reference/seaport-structs#spentitem
             if !event.offer.is_empty() {
                 let item_type = event.offer[0].0.to_u64();
+                
+                // there are 6 different event types, all different types of purchase.
+                // ie, purchase with native eth
+                // or purchase with erc20
+                // the last two I am unclear about. "with criteria"
                 if item_type == 0 {
-                    // log::info!("NATIVE ASSET (ETH) PURCHASE!");
-                    // log::info!("Amount: {:?}", substreams::scalar::BigDecimal::from(event.offer[0].3.clone()) /  substreams::scalar::BigDecimal::new(substreams::scalar::BigInt::from(1), 18));
+                    // unimplemented!("native eth");
                 }
-                // erc20 purchase event
-                else if item_type == 1 {
+                else if item_type == 1 { // erc20 purchase event
                     if !event.offer.is_empty() && !event.consideration.is_empty() {
-
-                    // log::info!("ERC20 PURCHASE!");
-                    let (amount_in, token_in): (f64, String) = match find_token_by_contract(&hex::encode(event.offer[0].1.clone())){
-                        Some(token) => {
-                            (event.offer[0].3.to_decimal(token.decimals).to_f64().unwrap(), token.symbol.to_owned())
-                        }
-                        None => {
-                            // if the amount was one, it was 99.99% likely to be an nft. dont scale by decimals.
-                            if event.offer[0].3 == BigInt::one() {
-                                (event.offer[0].3.to_decimal(1).to_f64().unwrap(), hex::encode(event.offer[0].1.to_owned()))
+                        let (amount_in, token_in): (seaport::BigDecimal, String) = match find_token_by_contract(&hex::encode(event.offer[0].1.clone())){
+                            Some(token) => {
+                                let a_i = seaport::BigDecimal { 
+                                    unscaled_value: event.offer[0].3.to_decimal(token.decimals).to_string(), 
+                                    scale: token.decimals as i32,
+                                };
+                                (a_i, token.symbol.to_owned())
                             }
-                            else {
-                                (event.offer[0].3.to_decimal(18).to_f64().unwrap(), hex::encode(event.offer[0].1.to_owned()))
+                            None => {
+                                // if the amount was one, it was 99.99% likely to be an nft. dont scale by decimals.
+                                if event.offer[0].3 == BigInt::one() {
+                                    (seaport::BigDecimal {
+                                        unscaled_value: event.offer[0].3.to_decimal(0).to_string(),
+                                        scale: 0,
+                                    },
+                                    hex::encode(event.offer[0].1.to_owned()))                                }
+                                else {
+                                    (seaport::BigDecimal {
+                                        unscaled_value: event.offer[0].3.to_decimal(18).to_string(),
+                                        scale: 18
+                                    }, hex::encode(event.offer[0].1.to_owned()))
+                                }
                             }
-                        }
-                    };
-                    let (amount_out, token_out): (f64, String)  = match find_token_by_contract(&hex::encode(event.consideration[0].1.clone())){
-                        Some(token) => {
-                            (event.consideration[0].3.to_decimal(token.decimals).to_f64().unwrap(), token.symbol.to_owned()) 
-                        }
-                        None => {
-                            // if the amount was one, it was 99.99% likely to be an nft. dont scale by decimals.
-                            if event.consideration[0].3 == BigInt::one() {
-                                (event.consideration[0].3.to_decimal(1).to_f64().unwrap(), hex::encode(event.consideration[0].1.to_owned()))
+                        };
+                        let (amount_out, token_out): (seaport::BigDecimal, String)  = match find_token_by_contract(&hex::encode(event.consideration[0].1.clone())){
+                            Some(token) => {
+                                (seaport::BigDecimal {
+                                    unscaled_value: event.consideration[0].3.to_decimal(token.decimals).to_string(),
+                                    scale: token.decimals as i32,
+                                }, token.symbol.to_owned()) 
                             }
-                            else {
-                                (event.consideration[0].3.to_decimal(18).to_f64().unwrap(), hex::encode(event.consideration[0].1.to_owned()))
+                            None => {
+                                // if the amount was one, it was 99.99% likely to be an nft. dont scale by decimals.
+                                if event.consideration[0].3 == BigInt::one() {
+                                    (seaport::BigDecimal {
+                                        unscaled_value: event.consideration[0].3.to_decimal(0).to_string(),
+                                        scale: 0
+                                    }, hex::encode(event.consideration[0].1.to_owned()))
+                                }
+                                else {
+                                    (seaport::BigDecimal {
+                                        unscaled_value: event.consideration[0].3.to_decimal(18).to_string(),
+                                        scale: 18,
+                                    }, hex::encode(event.consideration[0].1.to_owned()))
+                                }
                             }
-                        }
-                    };
-
-                    log::info!("the amount of eth in: {}", amount_in);
-                    log::info!("the amount of eth out: {}", amount_out);
-
-                    
+                        };
                         purchases.push(seaport::Purchase {
                             order_type: item_type,
                             from: hex::encode(event.offerer),
                             to: hex::encode(event.recipient),
                             token_in: token_in,
-                            token_in_amount: amount_in,
+                            token_in_amount: Some(amount_in),
                             token_out: token_out,
-                            token_out_amount: amount_out,
+                            token_out_amount: Some(amount_out),
                         })
                     }
                 }
@@ -177,10 +193,13 @@ pub fn store_seaport_activity(clock: Clock, purchases: seaport::SeaportPurchases
         output.delete_prefix(0, &format!("seaport_volume:{prev_hour_id}:{}", purchase.token_out));
         output.delete_prefix(0, &format!("seaport_activity:{prev_hour_id}"));
 
-        let in_amount = BigDecimal::from_str(&purchase.token_in_amount.to_string()).unwrap();
-        log::info!("the amount of eth out: {}", in_amount);
-        let out_amount = BigDecimal::from_str(&purchase.token_out_amount.to_string()).unwrap();
-        log::info!("the amount of eth out: {}", out_amount);
+        
+        // for graceful error handling, this should be a match, no .unwrap()
+        let in_amount = BigDecimal::from_str(&purchase.token_in_amount.unwrap().unscaled_value).unwrap();
+        let out_amount = BigDecimal::from_str(&purchase.token_out_amount.unwrap().unscaled_value).unwrap();
+        log::info!("token in amount: {}", in_amount);
+        log::info!("token out: {}", out_amount);
+
         // ordinal, key, value to add to store.
         // btw - right now I convert a f64 to a str to a BigDecimal - that can't be the most efficient.
         output.add(0, format!("seaport_volume:{hour_id}:{}", purchase.token_in), in_amount);
@@ -200,9 +219,10 @@ pub fn metrics_out(
     let hour_id = timestamp_seconds / 3600;
 
     for purchase in purchases.purchases {
-        let val = store.get_at(1, format!("seaport_volume:{hour_id}:{}", purchase.token_in)).unwrap().to_f64().unwrap(); 
+        // again, should be a match statement, not .unwrap()
+        let val = store.get_at(1, format!("seaport_volume:{hour_id}:{}", purchase.token_in)).unwrap(); 
         log::info!("value retrieved: {}", val);
-        metrics.push(seaport_metrics::Metric {key: format!("seaport_volume:hour:{hour_id}:{}", purchase.token_in), value: val});
+        metrics.push(seaport_metrics::Metric {key: format!("seaport_volume:hour:{hour_id}:{}", purchase.token_in), value: val.to_string()});
     }
 
     Ok(Some(seaport_metrics::Metrics { metrics }))

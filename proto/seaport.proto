@@ -11,7 +11,12 @@ message Purchase {
     string from = 2;
     string to = 3;
     string token_in = 4;
-    double token_in_amount = 5;
+    BigDecimal token_in_amount = 5;
     string token_out = 6;
-    double token_out_amount = 7;
+    BigDecimal token_out_amount = 7;
+}
+
+message BigDecimal {
+    string unscaled_value = 1;
+    int32 scale = 2;
 }

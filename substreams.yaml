@@ -22,7 +22,7 @@ binaries:
 modules:
   - name: map_seaport_purchases
     kind: map
-    initialBlock: 19160000
+    initialBlock: 19170000
     inputs:
       - source: sf.ethereum.type.v2.Block
     output:
@@ -30,7 +30,7 @@ modules:
   
   - name: store_seaport_activity
     kind: store
-    initialBlock: 19160000
+    initialBlock: 19170000
     updatePolicy: add
     valueType: bigdecimal 
     inputs:
@@ -39,7 +39,7 @@ modules:
   
   - name: metrics_out
     kind: map
-    initialBlock: 19160000
+    initialBlock: 19170000
     inputs: 
      - source: sf.substreams.v1.Clock
      - map: map_seaport_purchases
