@@ -86,11 +86,10 @@ fn map_seaport_purchases(blk: eth::Block) -> Result<Option<seaport::SeaportPurch
     let mut purchases: Vec<seaport::Purchase> = Vec::new();
     for log in blk.logs() {
         if let Some(event) = abi::seaport::events::OrderFulfilled::match_and_decode(log.log) {
-            
             // https://docs.opensea.io/reference/seaport-structs#spentitem
             if !event.offer.is_empty() {
                 let item_type = event.offer[0].0.to_u64();
-                
+                log::info!("{}", item_type);
                 // there are 6 different event types, all different types of purchase.
                 // ie, purchase with native eth
                 // or purchase with erc20
@@ -98,7 +97,7 @@ fn map_seaport_purchases(blk: eth::Block) -> Result<Option<seaport::SeaportPurch
                 if item_type == 0 {
                     
                 }
-                else if item_type == 1 { // erc20 purchase event
+                else if item_type == 1 || item_type == 2 { // erc20 purchase event or erc721 accept offer
                     if !event.offer.is_empty() && !event.consideration.is_empty() {
                         let (amount_in, token_in): (seaport::BigDecimal, String) = match find_token_by_contract(&hex::encode(event.offer[0].1.clone())){
                             Some(token) => {
@@ -158,10 +157,6 @@ fn map_seaport_purchases(blk: eth::Block) -> Result<Option<seaport::SeaportPurch
                         })
                     }
                 }
-                else if item_type == 2 {
-                    // log::info!("order purchased with ERC721!");
-    
-                }
                 else if item_type == 3 {
                     // log::info!("order purchased with ERC1155!");
     
@@ -184,27 +179,34 @@ fn map_seaport_purchases(blk: eth::Block) -> Result<Option<seaport::SeaportPurch
 pub fn store_seaport_activity(clock: Clock, purchases: seaport::SeaportPurchases, output: StoreAddBigDecimal) {
     // unimplemented!("filter and store purchases. this is where I could blacklist bad actors.");
     let timestamp_seconds = clock.timestamp.unwrap().seconds;
+    let minute_id = timestamp_seconds / 60;
+    let prev_minute_id = minute_id - 1;
     let hour_id = timestamp_seconds / 3600;
     let prev_hour_id = hour_id - 1;
 
     for purchase in purchases.purchases {
         // delete prior metrics from KV store.
-        output.delete_prefix(0, &format!("seaport_volume:{prev_hour_id}:{}", purchase.token_in));
-        output.delete_prefix(0, &format!("seaport_volume:{prev_hour_id}:{}", purchase.token_out));
-        output.delete_prefix(0, &format!("seaport_activity:{prev_hour_id}"));
+        output.delete_prefix(0, &format!("seaport_volume:hour={prev_hour_id}:token={}", purchase.token_in));
+        output.delete_prefix(0, &format!("seaport_volume:hour={prev_hour_id}:token={}", purchase.token_out));
+        output.delete_prefix(0, &format!("seaport_volume:minute={prev_minute_id}:token={}", purchase.token_in));
+        output.delete_prefix(0, &format!("seaport_volume:minute={prev_minute_id}:token={}", purchase.token_out));
+        output.delete_prefix(0, &format!("seaport_activity:hour={prev_hour_id}"));
+        output.delete_prefix(0, &format!("seaport_activity:minute={prev_minute_id}"));
+
 
         
         // for graceful error handling, this should be a match, no .unwrap()
         let in_amount = BigDecimal::from_str(&purchase.token_in_amount.unwrap().unscaled_value).unwrap();
         let out_amount = BigDecimal::from_str(&purchase.token_out_amount.unwrap().unscaled_value).unwrap();
-        log::info!("token in amount: {}", in_amount);
-        log::info!("token out: {}", out_amount);
 
         // ordinal, key, value to add to store.
         // btw - right now I convert a f64 to a str to a BigDecimal - that can't be the most efficient.
-        output.add(0, format!("seaport_volume:{hour_id}:{}", purchase.token_in), in_amount);
-        output.add(0, format!("seaport_volume:{hour_id}:{}", purchase.token_out), out_amount);
-        output.add(0, format!("seaport_activity:{}", hour_id), &BigDecimal::one());
+        output.add(0, format!("seaport_volume:hour={hour_id}:token={}", purchase.token_in), &in_amount);
+        output.add(0, format!("seaport_volume:hour={hour_id}:token={}", purchase.token_out), &out_amount);
+        output.add(0, &format!("seaport_volume:minute={minute_id}:token={}", purchase.token_in), in_amount);
+        output.add(0, &format!("seaport_volume:minute={minute_id}:token={}", purchase.token_out), out_amount);
+        output.add(0, format!("seaport_activity:hour={}", hour_id), &BigDecimal::one());
+        output.add(0, format!("seaport_activity:minute={}", minute_id), &BigDecimal::one());
     }
 }
 
@@ -216,19 +218,37 @@ pub fn metrics_out(
 ) -> Result<Option<seaport_metrics::Metrics>, substreams::errors::Error> {
     let mut metrics = Vec::new();
     let timestamp_seconds = clock.timestamp.unwrap().seconds;
+    let minute_id = timestamp_seconds / 60;
     let hour_id = timestamp_seconds / 3600;
-
-    for purchase in purchases.purchases {
-        // again, should be a match statement, not .unwrap()
-        let value_in = store.get_at(1, format!("seaport_volume:{hour_id}:{}", purchase.token_in)).unwrap(); 
-        let value_out = store.get_at(1, format!("seaport_volume:{hour_id}:{}", purchase.token_out)).unwrap(); 
-        let activity = store.get_at(1, format!("seaport_volume:{hour_id}:{}", purchase.token_out)).unwrap();
-
-        metrics.push(seaport_metrics::Metric {key: format!("seaport_volume:hour:{hour_id}:{}", purchase.token_in), value: value_in.to_string()});
-        metrics.push(seaport_metrics::Metric {key: format!("seaport_volume:hour:{hour_id}:{}", purchase.token_out), value: value_out.to_string()});
-        metrics.push(seaport_metrics::Metric {key: format!("seaport_activity:{}", hour_id), value: activity.to_string()});
+    
+    // metrics that arn't purchase dependent
+    if !(purchases.purchases.len() == 0) {
+        let minute_activity = store.get_at(1, format!("seaport_activity:minute={}", minute_id)).unwrap_or(BigDecimal::zero());
+        let hour_activity = store.get_at(1, format!("seaport_activity:hour={}", hour_id)).unwrap_or(BigDecimal::zero());
+        metrics.push(seaport_metrics::Metric {key: format!("seaport_activity:minute={}", minute_id), value: minute_activity.to_string()});
+        metrics.push(seaport_metrics::Metric {key: format!("seaport_activity:hour={}", hour_id), value: hour_activity.to_string()});
     }
 
+    // dont push metrics already seen.
+    let mut seen_token_addr: Vec<String> = Vec::new();
+    for purchase in purchases.purchases {
+        // again, should be a match statement, not .unwrap()
+        if !seen_token_addr.contains(&purchase.token_in) {
+
+            let minute_value_in = store.get_at(1, format!("seaport_volume:minute={minute_id}:token={}", purchase.token_in)).unwrap(); 
+            let hour_value_in = store.get_at(1, format!("seaport_volume:hour={hour_id}:token={}", purchase.token_in)).unwrap(); 
+            metrics.push(seaport_metrics::Metric {key: format!("seaport_volume:minute={minute_id}:token={}", purchase.token_in), value: minute_value_in.to_string()});
+            metrics.push(seaport_metrics::Metric {key: format!("seaport_volume:hour={hour_id}:token={}", purchase.token_in), value: hour_value_in.to_string()});
+            seen_token_addr.push(purchase.token_in);
+        }
+        if !seen_token_addr.contains(&purchase.token_out) {
+            let minute_value_out = store.get_at(1, format!("seaport_volume:minute={minute_id}:token={}", purchase.token_out)).unwrap(); 
+            let hour_value_out = store.get_at(1, format!("seaport_volume:hour={hour_id}:token={}", purchase.token_out)).unwrap(); 
+            metrics.push(seaport_metrics::Metric {key: format!("seaport_volume:minute={minute_id}:token={}", purchase.token_out), value: minute_value_out.to_string()});
+            metrics.push(seaport_metrics::Metric {key: format!("seaport_volume:hour={hour_id}:token={}", purchase.token_out), value: hour_value_out.to_string()});
+            seen_token_addr.push(purchase.token_out);
+        }
+    }
     Ok(Some(seaport_metrics::Metrics { metrics }))
 }
 
